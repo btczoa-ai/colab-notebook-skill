@@ -29,9 +29,13 @@ description: >-
 - **環境変数の初期定義・フォールバック（デフォルト値）の禁止**:
   - コードセルや Python スクリプト内で `os.getenv("KEY", "default_value")` のようにデフォルト値をハードコードしてフォールバックすることを**厳格に禁止**する。
   - すべての必要な設定値（モデル名、ポート、メモリ比率、各種トークン等）は、**必ず `.env` ファイルから直接取得**しなければならない。
-- **厳格なファイル存在確認・必須キー検証と即時エラー停止**:
+- **厳格なファイル存在確認・4大統一環境変数の検証と即時エラー停止**:
   - `.env` ファイルが存在しない場合、直ちに明瞭なエラーログ（例: `❌ エラー: .env ファイルが見つかりません。事前にランタイム直下に配置してください。`）を出力し、例外を送出して処理を即時中断する。
-  - 必須設定項目（`HF_TOKEN`, `LLM_API_KEY`, `TUNNEL_TOKEN`, `MODEL_NAME`, `TUNNEL_PORT` 等）が取得できなかった（未定義または空文字）場合、**「どの環境変数が取得できなかったか」をエラーログに明記して即座に実行を停止**する。ダミー値で継続することは認められない。
+  - **4大標準環境変数 (`TUNNEL_HOST`, `TUNNEL_PORT`, `TUNNEL_HOSTNAME`, `LLM_API_KEY`) の定義義務**:
+    - すべての Studio / 推論ノートブックは、接続先・待受ポート・外部公開URL・認証キーとして上記4つの標準環境変数を `.env` に定義し、コード内で厳格に検証しなければならない。
+    - 必須設定項目（`TUNNEL_HOST`, `TUNNEL_PORT`, `LLM_API_KEY`, `MODEL_NAME` 等）が取得できなかった（未定義または空文字）場合、**「どの環境変数が取得できなかったか」をエラーログに明記して即座に実行を停止**する。ダミー値で継続することは認められない。
+  - **`LLM_API_KEY` の直接コンソール表示**:
+    - 設定読み込みセルにおいて、これまで行われていたマスク表示（`設定済み`）を廃止し、ユーザーが即座に OpenAI クライアント等の設定に利用できるよう、**`LLM_API_KEY` の値を直接 Colab コンソールへ出力**する（例: `print(f"  🔑 LLM_API_KEY      : {LLM_API_KEY}")`）。
 - **ベンダーロックインの排除（Colab Secret API の廃止）**:
   - `google.colab.userdata` への依存は完全に廃止し、すべての環境変数・シークレットは `python-dotenv` 経由で外部 `.env` から注入する。
 
@@ -41,7 +45,7 @@ description: >-
   - `routers/health.py`: 死活監視用 (`GET /healthz`)
   - `routers/status.py`: モデル状態・詳細エラー・GPU/VRAM情報取得用 (`GET /api/v1/status`)
   - `routers/chat.py` (推論API): OpenAI互換チャット補完 (`POST /v1/chat/completions`)。ChatMLフォーマット変換、ストリーミング (`text/event-stream`)、非ストリーミング、および `<think>` タグ（推論トークン）の長文出力に対応。
-  - `routers/models.py`: 利用可能モデル一覧 (`GET /v1/models`)
+  - `routers/models.py`: 利用可能モデル一覧 (`GET /v1/models`)。OpenAI 仕様（`{"object": "list", "data": [{"id": ..., "object": "model"}]}`）を満たすモデル情報一覧を返却する。
   - `routers/<feature>.py`: 各業務・専用推論ロジック (例: `routers/voice.py`, `routers/frames.py`)
   - `server.py`: 各ルーターの `include_router` のみを行う薄いエントリーポイント
 
@@ -93,6 +97,22 @@ description: >-
 - **キャッシュの定期ローテーション**:
   - パッケージインストール後の不要キャッシュ削除（例: `!uv cache clean`）や、古いログファイルの自動ローテーション（一定行数・容量超過時の破棄）を組み込み、長時間の安定稼働を維持する。
 
+### 原則 10: 推論リクエストの JST 日時・実訪問元 IP・入力テキストの Colab コンソール出力規約
+ユーザーからの推論リクエスト受信時、Colab 画面上で稼働状況・アクセス状況を即座に把握できるよう、以下の3大要素をスレッドセーフかつ確実に Colab コンソールへ出力しなければならない。
+
+1. **日本標準時（JST / UTC+9）の固定適用**:
+   - Colab ランタイムのデフォルトである UTC 表示は**禁止**し、必ず `datetime.timezone(datetime.timedelta(hours=9))` を用いて JST 日時（`YYYY-MM-DD HH:MM:SS JST`）をフォーマットして出力する。
+2. **Cloudflare Tunnel 対応のクライアント実 IP 特定**:
+   - `request.headers.get("CF-Connecting-IP")` ➔ `request.headers.get("X-Forwarded-For", "").split(",")[0].strip()` ➔ `request.client.host` の優先順位で実訪問元 IP を特定する。
+3. **入力内容（プロンプト・メッセージ本文）のプレビュー**:
+   - OpenAI 互換の `messages` 履歴から最新の `user` ロール本文、または `prompt` を抽出し、1行（改行を空白置換、最大 100〜120文字）でプレビュー表示する。
+4. **標準コンソールログ形式**:
+   ```text
+   [INFERENCE REQUEST] [2026-11-08 01:10:00 JST] IP: 203.0.113.195 | Input: "プロジェクトの概要を教えて" | msgs: 2, stream: True
+   [INFERENCE COMPLETED] [2026-11-08 01:10:02 JST] IP: 203.0.113.195 | Tokens: 128 | Duration: 1.85s
+   ```
+   ※ C++/Rust などの外部バイナリ推論エンジンの場合は、リアルタイム監視セル（`tail -f` 相当）のログパーサーで上記と同等の一貫したフォーマット出力を行う。
+
 ---
 
 ## 2. 標準ノートブック構造 (24ステップ・テンプレート)
@@ -132,6 +152,18 @@ Cell 23 [トレースログ監視]: サーバー & Cloudflare Tunnel ログの�
 - **ChatML フォーマット変換**: `<|im_start|>{role}\n{content}<|im_end|>\n` 構造の厳格な構築。
 - **推論思考トークン (`<think>`) の配慮**: DeepSeek や Qwen 蒸留モデル等の推論プロセス出力に対応するため、`max_tokens` のデフォルト値を 2048 以上に確保。
 - **デュアルレスポンス対応**: `stream=True` (Server-Sent Events) と `stream=False` (通常JSON) の完全サポート。
+- **推論リクエスト詳細ログ (原則 10 準拠)**:
+  ```python
+  @router.post('/v1/chat/completions', dependencies=[Depends(verify_api_key)])
+  async def chat_completions(req: ChatCompletionRequest, raw_req: Request):
+      now_str = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9))).strftime('%Y-%m-%d %H:%M:%S JST')
+      client_ip = (raw_req.headers.get('CF-Connecting-IP')
+                   or raw_req.headers.get('X-Forwarded-For', '').split(',')[0].strip()
+                   or (raw_req.client.host if raw_req.client else 'unknown'))
+      user_inputs = [m.content for m in req.messages if m.role == 'user']
+      input_text = user_inputs[-1] if user_inputs else (req.messages[-1].content if req.messages else '')
+      print(f'\n[INFERENCE REQUEST] [{now_str}] IP: {client_ip} | Input: "{input_text[:120]}" | msgs: {len(req.messages)}, stream: {req.stream}', flush=True)
+  ```
 
 ### パターン B: モデルロード待機ループ (`Cell 20`)
 - **ポーリング制御**: `GET /api/v1/status` を 5秒間隔でポーリング（最大 10分〜15分待機）。
