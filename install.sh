@@ -99,3 +99,9 @@ if [[ "${installed}" -eq 0 ]]; then
 fi
 
 echo "Done! Installed colab-notebook skill & rules to ${installed} agent(s)."
+
+if ! command -v colab >/dev/null 2>&1; then
+  echo ""
+  echo "[Optional] 'colab' CLI was not found."
+  echo "  If you want agents to launch/operate Google Colab VMs directly, install the Colab CLI and authenticate."
+fi
