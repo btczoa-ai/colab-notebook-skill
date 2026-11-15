@@ -1,5 +1,5 @@
 ---
-name: colab-studio-notebook
+name: colab-notebook
 description: >-
   Google Colab 上で AI モデル推論エンジンやマイクロサービス Studio を構築・運用するノートブック作成規約と設計パターン。
   設定の外部化 (.env によるシークレット一元管理)、単一責務コードブロック原則、%%writefile による宣言的ファイル生成、
@@ -173,4 +173,30 @@ Cell 23 [トレースログ監視]: サーバー & Cloudflare Tunnel ログの�
 ### パターン C: リアルタイム・トレース監視 (`Cell 24`)
 - **`tail -f` 方式の非同期ストリーミング**: `open(..., 'r')` と `seek(0, os.SEEK_END)` によるリアルタイムログ追跡。
 - **重要タグの強調表示**: `CHECKPOINT`, `API_IO`, `POST /v1/chat/completions`, `ERROR` 等の特定タグをハイライト表示し、稼働状況を直感的に把握可能にする。
+
+### パターン D: `subprocess` 出力の Colab コンソールストリーミング
+- **原則**: Colab / Jupyter セル内で `subprocess.run(...)` をそのまま呼ぶと出力がセルのコンソールログに現れないため、`subprocess.Popen(..., stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)` で1行ずつ `print(line, end="", flush=True)` へ流すヘルパー（`run_stream` 等）を必ず使用する。
+  ```python
+  def run_stream(cmd, cwd=None):
+      with subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1) as p:
+          for line in p.stdout:
+              print(line, end="", flush=True)
+          if p.wait() != 0:
+              raise subprocess.CalledProcessError(p.returncode, cmd)
+  ```
+
+### パターン E: コマンド実行・ビルド・インストール・ダウンロードにおける警告・冗長出力抑制規約
+- **原則**: Colab ノートブック内で実行するコマンド全般（ビルド、パッケージインストール、ファイルダウンロード、Python 実行等）において、コンソールログが大量の警告や進捗バーで埋まるのを防ぐため、必ず警告・冗長出力の抑制オプションを付与する。
+- **CMake / ビルド構成時の必須フラグ**:
+  - `-Wno-dev`: CMake 開発者向け警告の抑制
+  - `-DCMAKE_C_FLAGS=-w` / `-DCMAKE_CXX_FLAGS=-w`: C / C++ コンパイラ警告の抑制
+  - `-DCMAKE_CUDA_FLAGS=-w`（CUDA ビルド時）: `nvcc` 警告の抑制
+- **インストール・ダウンロード時の必須フラグ**:
+  - **`apt-get`**: `DEBIAN_FRONTEND=noninteractive apt-get -qq update && apt-get -qq install -y ...`
+  - **`uv pip` / `pip`**: `-q`（静穏フラグ）の付与
+  - **`curl` / `wget`**: `curl -fsSL` / `wget -q`（進捗バーや不要メッセージの抑制、エラー時のみ出力）
+  - **`git`**: `git clone -q` / `git pull -q`
+- **Python / 推論実行時の警告抑制**:
+  - `PYTHONWARNINGS="ignore"` または `python -W ignore` を設定し、不要な `DeprecationWarning` / `UserWarning` を抑制する。
+
 
