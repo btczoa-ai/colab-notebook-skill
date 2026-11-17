@@ -2,10 +2,11 @@
 set -euo pipefail
 
 SKILL_NAME="colab-notebook"
-REPO_RAW_URL="https://raw.githubusercontent.com/btczoa/colab-notebook-skill/main/SKILL.md"
+REPO_RAW_BASE="https://raw.githubusercontent.com/btczoa/colab-notebook-skill/main"
+REPO_RAW_URL="${REPO_RAW_BASE}/SKILL.md"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# 1. SKILL.md の取得元決定（ローカル実行 or curl ワンライナー実行）
+# 1. SKILL.md および scripts/ の取得元決定（ローカル実行 or curl ワンライナー実行）
 TMP_DIR=""
 cleanup() {
   if [[ -n "${TMP_DIR}" && -d "${TMP_DIR}" ]]; then
@@ -16,11 +17,14 @@ trap cleanup EXIT
 
 if [[ -f "${SCRIPT_DIR}/SKILL.md" ]]; then
   SRC_SKILL="${SCRIPT_DIR}/SKILL.md"
+  SRC_LLAMA_SCRIPT="${SCRIPT_DIR}/scripts/install_llama_cpp.sh"
 else
   TMP_DIR="$(mktemp -d)"
   SRC_SKILL="${TMP_DIR}/SKILL.md"
-  echo "Downloading SKILL.md from GitHub..."
+  SRC_LLAMA_SCRIPT="${TMP_DIR}/install_llama_cpp.sh"
+  echo "Downloading SKILL.md and scripts from GitHub..."
   curl -fsSL "${REPO_RAW_URL}" -o "${SRC_SKILL}"
+  curl -fsSL "${REPO_RAW_BASE}/scripts/install_llama_cpp.sh" -o "${SRC_LLAMA_SCRIPT}" || true
 fi
 
 # 2. スキル展開先エージェントの定義
@@ -87,6 +91,11 @@ for agent in antigravity gemini claude codex; do
   if [[ -d "${agent_root}" ]]; then
     mkdir -p "${skill_dir}"
     cp "${SRC_SKILL}" "${skill_dir}/SKILL.md"
+    if [[ -f "${SRC_LLAMA_SCRIPT}" ]]; then
+      mkdir -p "${skill_dir}/scripts"
+      cp "${SRC_LLAMA_SCRIPT}" "${skill_dir}/scripts/install_llama_cpp.sh"
+      chmod +x "${skill_dir}/scripts/install_llama_cpp.sh"
+    fi
     echo "[${agent}] Installed skill -> ${skill_dir}/SKILL.md"
     upsert_rule "${AGENT_RULE_FILES[$agent]}"
     installed=$((installed + 1))
